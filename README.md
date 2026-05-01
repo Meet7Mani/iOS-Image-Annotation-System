@@ -20,7 +20,8 @@ Supports drawing, selection, movement, markers, and coordinate export — design
 
 ## 📱 Demo
 
-![Image Annotation Demo](./image-annotation-demo.png)
+<img width="1024" height="1536" alt="img" src="https://github.com/user-attachments/assets/7369b8c1-4661-4d51-990a-940200d7e2dc" />
+
 
 ---
 
