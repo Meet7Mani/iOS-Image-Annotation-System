@@ -15,50 +15,35 @@ class DrawingVC: UIViewController {
         self.viewOutput.isHidden            = true
     }
 
-    @IBAction func btnAddMark(_ sender: UIButton) {
+    // MARK: - Actions
+    @IBAction func btnDrawing(_ sender: UIButton) {
         
-        drawingView.endSelectionMode()
-        drawingView.isSelectionMovementMode = false
-        drawingView.isEraserEnabled         = false
-        drawingView.isAddingMarker          = true
-        drawingView.isDrawingEnabled        = false
+        switch sender.tag {
+        case 0 :
+            drawingView.startSelectionMode()
+        case 1 :
+            drawingView.endSelectionMode()
+            drawingView.enableDrawingMode()
+        case 2 :
+            drawingView.currentTool = .marker
+        case 3 :
+            drawingView.undoLastDrawing()
+        case 4 :
+            drawingView.enableEraserMode()
+        case 5 :
+            drawingView.clearAll()
+            lblMarkerPoints.isHidden        = true
+            viewOutput.isHidden             = true
+        case 6 :
+            drawingView.currentTool = .moveSelection
+        default :
+            break
+        }
     }
-    
-    @IBAction func btnAddLine(_ sender: UIButton) {
-        
-        drawingView.isSelectionMovementMode = false
-        drawingView.isEraserEnabled         = false
-        drawingView.isAddingMarker          = false
-        drawingView.endSelectionMode()
-        drawingView.enableDrawingMode()
-    }
-    
-    @IBAction func btnClear(_ sender: UIButton) {
-        
-        drawingView.isSelectionMovementMode = false
-        drawingView.clearAll()
-    }
-    @IBAction func btnSelection(_ sender: UIButton) {
-        
-        drawingView.isSelectionMovementMode = false
-        drawingView.isEraserEnabled         = false
-        drawingView.isAddingMarker          = false
-        drawingView.isDrawingEnabled        = false
-        drawingView.startSelectionMode()
-    }
-    @IBAction func btnUndo(_ sender: UIButton) {
-        
-        drawingView.isSelectionMovementMode = false
-        drawingView.undoLastDrawing()
-    }
-    @IBAction func btnEraser(_ sender: UIButton) {
-        
-        drawingView.isSelectionMovementMode = false
-        drawingView.enableEraserMode()
-    }
-    
+
+    // MARK: - Export
     @IBAction func btnExport(_ sender: UIButton) {
-        
+
         if let img = drawingView.exportAsImage() {
             
             self.imgOutput.image            = img
@@ -71,14 +56,5 @@ class DrawingVC: UIViewController {
             self.lblMarkerPoints.text       = joinedString
             self.lblMarkerPoints.isHidden   = false
         }
-    }
-    
-    @IBAction func btnMove(_ sender: UIButton) {
-        
-        drawingView.isEraserEnabled         = false
-        drawingView.isAddingMarker          = false
-        drawingView.isDrawingEnabled        = false
-        drawingView.isSelectionMode         = false
-        drawingView.isSelectionMovementMode = true
     }
 }
