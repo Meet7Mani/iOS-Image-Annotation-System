@@ -2,35 +2,16 @@
 import Foundation
 import UIKit
 
-struct Line {
-   
-    var points                                      : [CGPoint]
-    var color                                       : UIColor
-    var width                                       : CGFloat
-}
-
 class DrawingView: UIView {
 
     var drawingColor                                = UIColor.red
     var drawingWidth                                : CGFloat  = 3
-    var isSelectionMovementMode                     = false
-    var isSelectionMode                             = false
-    var isAddingMarker                              = false
-    var isDrawingEnabled                            = false
-    var isEraserEnabled = false {
-        didSet {
-            eraserCursor.isHidden                   = !isEraserEnabled
-        }
-    }
-    private var currentPath                         : UIBezierPath?
-    private var currentShapeView                    : UIView?
+    var currentTool                                 : DrawingTool = .none
                 
     private var selectionBox                        : UIView?
     private var markerViews                         : [UIView]  = []
     private var lines                               : [Line]    = []
-    private var selectedLineIndices                 : [Int]     = []
-
-    var selectedSegments: [SelectedSegment] = []
+    var selectedLineIDs                             : Set<UUID> = []
     
     let eraserCursor: UIImageView = {
         
@@ -60,32 +41,24 @@ class DrawingView: UIView {
     }
 
     func enableDrawingMode() {
-       
-        isDrawingEnabled                            = true
-        isAddingMarker                              = false
-        isEraserEnabled                             = false
+        currentTool                                 = .pen
         endSelectionMode()
     }
+    
     func enableEraserMode() {
-       
-        isEraserEnabled                             = true
-        isDrawingEnabled                            = false
-        isAddingMarker                              = false
+        currentTool                                 = .eraser
         endSelectionMode()
     }
+    
     func startSelectionMode() {
-        
-        isSelectionMode                             = true
+        currentTool                                 = .selection
         selectionBox?.removeFromSuperview()
         selectionBox                                = nil
     }
 
     func endSelectionMode() {
-       
-        isSelectionMode                             = false
         selectionBox?.removeFromSuperview()
         selectionBox                                = nil
-        selectedLineIndices.removeAll()
     }
 
     func clearAll() {
@@ -96,10 +69,7 @@ class DrawingView: UIView {
         }
         markerViews.removeAll()
         lines.removeAll()
-        selectedSegments.removeAll()
-        selectedLineIndices.removeAll()
-        currentPath                                 = nil
-        currentShapeView                            = nil
+        selectedLineIDs.removeAll()
         selectionBox?.removeFromSuperview()
         selectionBox                                = nil
         setNeedsDisplay()
@@ -145,50 +115,39 @@ class DrawingView: UIView {
 
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-       
+
         guard let point = touches.first?.location(in: self) else { return }
 
-        if isEraserEnabled {
-            
-            eraserCursor.center                     = point
-            eraserCursor.isHidden                   = false
-            // Immediately call erase to start processing.
-            erase(at: point, radius: drawingWidth * 1.5)
-            return
-        }
+        switch currentTool {
 
-        
-        if isSelectionMode {
-            // 👇 If user taps inside the selection box, ignore — pan gesture will handle it
-            if let box = selectionBox, box.frame.contains(point) {
-                return
-            }
-            self.beginSelection(at: point)
-            return
-        }
-
-        if isAddingMarker {
-           
-            if !markerViews.contains(where: { $0.frame.contains(point) }) {
-               
-                addMark(at: point)
-            }
-            return
-        }
-
-        if isDrawingEnabled {
-            
+        case .pen:
             let newLine                             = Line(points: [point],
                                                            color: drawingColor,
                                                            width: drawingWidth)
             lines.append(newLine)
             setNeedsDisplay()
-            return
-        }
-        
-        if isSelectionMovementMode {
+
+        case .eraser:
+            eraserCursor.center                     = point
+            eraserCursor.isHidden                   = false
+            // Immediately call erase to start processing.
+            erase(at: point, radius: drawingWidth * 1.5)
+
+        case .marker:
+            addMark(at: point)
+
+        case .selection:
             
-            self.finalizeSelectionBox()
+            if let box = selectionBox, box.frame.contains(point) {
+                return
+            }
+            beginSelection(at: point)
+
+        case .moveSelection:
+            finalizeSelectionBox()
+
+        case .none:
+            break
         }
     }
 
@@ -197,7 +156,7 @@ class DrawingView: UIView {
         
         guard let point = touches.first?.location(in: self) else { return }
 
-        if isEraserEnabled {
+        if currentTool == .eraser {
             
             // Move the eraser cursor.
             eraserCursor.center                     = point
@@ -205,13 +164,13 @@ class DrawingView: UIView {
             erase(at: point, radius: drawingWidth * 1.5) // adjust radius as needed
             return
         }
-        if isSelectionMode {
+        if currentTool == .selection {
            
             self.updateSelectionBox(to: point)
             return
         }
 
-        if !lines.isEmpty && isDrawingEnabled {
+        if !lines.isEmpty && currentTool == .pen {
             
             lines[lines.count - 1].points.append(point)
             setNeedsDisplay()
@@ -221,19 +180,17 @@ class DrawingView: UIView {
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         
-        if isEraserEnabled {
+        if currentTool == .eraser {
             
             eraserCursor.isHidden                   = true
             return
         }
         
-        if isSelectionMode {
-            //self.finalizeSelectionBox()
-            self.addGestureToSelectionBox()
+        if currentTool == .selection {
+            self.finalizeSelectionBox()
+            //self.addGestureToSelectionBox()
             return
         }
-        currentPath                                 = nil
-        currentShapeView                            = nil
     }
 
     private func createSelectionBox(at point: CGPoint) -> UIView {
@@ -309,50 +266,52 @@ class DrawingView: UIView {
         guard let context = UIGraphicsGetCurrentContext() else { return }
         // Draw original lines
         for line in lines {
-           
-            drawLine(line, in: context)
-        }
-        // Draw selected segments (ghost copy that moves)
-        for segment in selectedSegments {
             
-            let tempLine                            = Line(points: segment.points,
-                                                           color: drawingColor,
-                                                           width: drawingWidth)
-            drawLine(tempLine, in: context)
+            let isSelected = selectedLineIDs.contains(line.id)
+            drawLine(line, isSelected: isSelected, in: context)
         }
     }
     
-    func drawLine(_ line: Line, in context: CGContext) {
-       
-        guard line.points.count > 1 else { return }
+    func drawLine(_ line: Line, isSelected: Bool = false, in context: CGContext) {
+
+        guard line.points.count > 1 else {
+            return
+        }
 
         context.setStrokeColor(line.color.cgColor)
-        context.setLineWidth(line.width)
+        context.setLineWidth(isSelected ? line.width + 2 : line.width)
         context.setLineCap(.round)
-
         context.beginPath()
         context.move(to: line.points[0])
 
         for point in line.points.dropFirst() {
-           
+            
             context.addLine(to: point)
         }
         context.strokePath()
     }
-    
-    func erase(at point: CGPoint, radius: CGFloat) {
-        
-        
-        lines                                       = lines.flatMap { eraseSegments(from: $0, around: point, radius: radius) }
 
-        selectedSegments = selectedSegments.flatMap {
-            
-            let line                                = Line(points: $0.points, color: drawingColor, width: drawingWidth)
-            return eraseSegments(from: line, around: point, radius: radius).map {
-               
-                SelectedSegment(points: $0.points)
+    func erase(at point: CGPoint, radius: CGFloat) {
+
+        var updatedLines: [Line] = []
+        var updatedSelectedIDs: Set<UUID> = []
+
+        for line in lines {
+
+            let erasedSegments = eraseSegments(from: line, around: point, radius: radius)
+            updatedLines.append(contentsOf: erasedSegments)
+
+            // Preserve selection state for split segments
+            if selectedLineIDs.contains(line.id) {
+
+                erasedSegments.forEach {
+                    updatedSelectedIDs.insert($0.id)
+                }
             }
         }
+
+        lines = updatedLines
+        selectedLineIDs = updatedSelectedIDs
         setNeedsDisplay()
     }
 
@@ -428,98 +387,52 @@ class DrawingView: UIView {
         }
     }
 
-    
     func finalizeSelectionBox() {
-       
-        guard let box = selectionBox else { return }
 
-        selectedSegments.removeAll()
+        guard let box = selectionBox else { return }
+        selectedLineIDs.removeAll()
 
         // Build a precise UIBezierPath from selection box
-        let selectionPath                           = UIBezierPath(rect: box.frame)
+        let selectionRect = box.frame.standardized
 
-        var newLines                                : [Line] = []
+        for line in lines {
 
-        for (index, line) in lines.enumerated() {
-           
-            var currentPoints                       : [CGPoint] = []
-            var remainingPoints                     : [CGPoint] = []
-            var isInside                            = false
-
-            for point in line.points {
-                
-                if selectionPath.contains(point) {
-                    
-                    currentPoints.append(point)
-                    isInside                        = true
-                }
-                else {
-                    
-                    if isInside, !currentPoints.isEmpty {
-                        // Finalize selection segment
-                        newLines.append(Line(points: currentPoints, color: line.color, width: line.width))
-                        selectedSegments.append(SelectedSegment(points: currentPoints))
-                        currentPoints               = []
-                    }
-                    remainingPoints.append(point)
-                    isInside                        = false
-                }
+            let intersects = line.points.contains {
+                selectionRect.contains($0)
             }
 
-            if isInside, !currentPoints.isEmpty {
-                
-                newLines.append(Line(points: currentPoints, color: line.color, width: line.width))
-                selectedSegments.append(SelectedSegment(points: currentPoints))
+            if intersects {
+                selectedLineIDs.insert(line.id)
             }
-            // Update original line
-            lines[index].points                     = remainingPoints
         }
-        // Add new selected lines to `lines` array
-        lines.append(contentsOf: newLines)
-        // Add gesture recognizer to move the selection box
+
         if box.gestureRecognizers?.isEmpty ?? true {
-            
-            let pan                                 = UIPanGestureRecognizer(target: self,
-                                                                             action: #selector(handleSelectedGroupPan(_:)))
+
+            let pan = UIPanGestureRecognizer(target: self, action: #selector(handleSelectedGroupPan(_:)))
             box.addGestureRecognizer(pan)
         }
         setNeedsDisplay()
     }
-
-    func addGestureToSelectionBox() {
-        
-        guard let box = selectionBox else { return }
-        
-        if box.gestureRecognizers?.isEmpty ?? true {
-            
-            let pan                                 = UIPanGestureRecognizer(target: self,
-                                                                             action: #selector(handleSelectedGroupPan(_:)))
-            box.addGestureRecognizer(pan)
-        }
-        setNeedsDisplay()
-    }
-
+   
     @objc func handleSelectedGroupPan(_ gesture: UIPanGestureRecognizer) {
        
-        guard isSelectionMovementMode else { return }
+        guard currentTool == .moveSelection else { return }
 
         let translation                             = gesture.translation(in: self)
         gesture.setTranslation(.zero, in: self)
 
         // Loop using indices so we can mutate selectedSegments
-        for i in 0..<selectedSegments.count {
-            
-            for j in 0..<selectedSegments[i].points.count {
-                
-                selectedSegments[i].points[j].x     += translation.x
-                selectedSegments[i].points[j].y     += translation.y
-            }
-        }
+        for index in lines.indices {
 
-        // Also update the matching lines in `lines`
-        for i in (lines.count - selectedSegments.count)..<lines.count {
-           
-            lines[i].points                         = selectedSegments[i - (lines.count - selectedSegments.count)].points
+            guard selectedLineIDs.contains(lines[index].id) else {
+                continue
+            }
+
+            for pointIndex in lines[index].points.indices {
+
+                lines[index].points[pointIndex].x += translation.x
+                lines[index].points[pointIndex].y += translation.y
+            }
         }
         if let box = selectionBox {
             
@@ -532,59 +445,43 @@ class DrawingView: UIView {
 extension DrawingView {
     
     private func eraseSegments(from line: Line, around point: CGPoint, radius: CGFloat) -> [Line] {
-        guard line.points.count > 1 else { return [line] }
-        
-        var newLines                                : [Line]    = []
-        var currentPoints                           : [CGPoint] = []
 
-        let points                                  = line.points
+        guard line.points.count > 1 else {
+            return [line]
+        }
+
+        var newLines: [Line] = []
+        var currentPoints: [CGPoint] = []
+
+        let points = line.points
 
         for i in 0..<points.count - 1 {
-           
-            let p1                                  = points[i]
-            let p2                                  = points[i + 1]
+
+            let p1 = points[i]
+            let p2 = points[i + 1]
 
             if segmentIntersectsCircle(p1: p1, p2: p2, center: point, radius: radius) {
-               
+
                 if currentPoints.count > 1 {
-                    
+
                     newLines.append(Line(points: currentPoints, color: line.color, width: line.width))
                 }
-                currentPoints                       = []
+                currentPoints = []
             }
             else {
-               
+
                 if currentPoints.isEmpty {
-                    
                     currentPoints.append(p1)
                 }
                 currentPoints.append(p2)
             }
         }
-        // Add remaining points if they didn't end inside eraser circle
         if currentPoints.count > 1 {
-            
+
             newLines.append(Line(points: currentPoints, color: line.color, width: line.width))
         }
         return newLines
     }
 }
-struct SelectedSegment {
-    
-    var points                                      : [CGPoint]
-}
-extension Line {
-    
-    func isInside(_ rect: CGRect) -> Bool {
-        
-        for point in points {
-           
-            if rect.contains(point) {
-                
-                return true
-            }
-        }
-        return false
-    }
-}
+
 
